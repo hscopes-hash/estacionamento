@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 export interface PrinterDevice {
   id: string
@@ -13,6 +13,58 @@ const PRINTER_STORAGE_KEY = 'parking_control_printer'
 const CREDENTIALS_STORAGE_KEY = 'parking_control_credentials'
 const PAIRED_PRINTERS_KEY = 'parking_control_paired_printers'
 
+// ============================================
+// ESC/POS Commands para impressoras térmicas
+// ============================================
+const ESC = 0x1B
+const GS = 0x1D
+const LF = 0x0A
+
+// Comandos ESC/POS
+const CMD = {
+  INIT: [ESC, 0x40],                    // Inicializar impressora
+  ALIGN_LEFT: [ESC, 0x61, 0x00],        // Alinhar esquerda
+  ALIGN_CENTER: [ESC, 0x61, 0x01],      // Alinhar centro
+  ALIGN_RIGHT: [ESC, 0x61, 0x02],       // Alinhar direita
+  BOLD_ON: [ESC, 0x45, 0x01],           // Negrito on
+  BOLD_OFF: [ESC, 0x45, 0x00],          // Negrito off
+  DOUBLE_HEIGHT_ON: [GS, 0x21, 0x10],   // Altura dupla on
+  DOUBLE_HEIGHT_OFF: [GS, 0x21, 0x00],  // Altura dupla off
+  DOUBLE_WIDTH_ON: [GS, 0x21, 0x01],    // Largura dupla on
+  DOUBLE_WIDTH_OFF: [GS, 0x21, 0x00],   // Largura dupla off
+  CUT: [GS, 0x56, 0x00],                // Cortar papel
+  FEED: (lines: number) => [ESC, 0x64, lines], // Alimentar linhas
+  LINE_FEED: [LF],
+}
+
+/**
+ * Converter string para bytes
+ */
+function stringToBytes(str: string): number[] {
+  const bytes: number[] = []
+  for (let i = 0; i < str.length; i++) {
+    const charCode = str.charCodeAt(i)
+    // Converter caracteres acentuados para aproximação ASCII
+    if (charCode > 127) {
+      // Caracteres especiais portugueses
+      const specialChars: Record<number, number> = {
+        224: 97, 225: 97, 226: 97, 227: 97, // à á â ã -> a
+        232: 101, 233: 101, 234: 101,       // è é ê -> e
+        236: 105, 237: 105,                 // ì í -> i
+        242: 111, 243: 111, 244: 111, 245: 111, // ò ó ô õ -> o
+        249: 117, 250: 117,                 // ù ú -> u
+        231: 99, 199: 67,                   // ç Ç -> c C
+        227: 97, 245: 111,                  // ã õ
+        193: 65, 201: 69, 205: 73, 211: 79, 218: 85, // A E I O U acentuados
+      }
+      bytes.push(specialChars[charCode] || charCode)
+    } else {
+      bytes.push(charCode)
+    }
+  }
+  return bytes
+}
+
 /**
  * Hook para gerenciar impressoras Bluetooth
  */
@@ -22,6 +74,8 @@ export function usePrinter() {
   const [isScanning, setIsScanning] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected')
   const [error, setError] = useState<string | null>(null)
+  const deviceRef = useRef<any>(null)
+  const characteristicRef = useRef<any>(null)
 
   // Verificar suporte ao Bluetooth
   const isBluetoothSupported = typeof navigator !== 'undefined' && 'bluetooth' in navigator
@@ -161,6 +215,29 @@ export function usePrinter() {
   }, [isBluetoothSupported, savePairedPrinters])
 
   /**
+   * Encontrar característica de escrita no dispositivo
+   */
+  const findWriteCharacteristic = async (server: any): Promise<any> => {
+    const services = await server.getPrimaryServices()
+    
+    for (const service of services) {
+      try {
+        const characteristics = await service.getCharacteristics()
+        for (const char of characteristics) {
+          // Procurar característica com propriedade write
+          if (char.properties.write || char.properties.writeWithoutResponse) {
+            return char
+          }
+        }
+      } catch (e) {
+        console.log('Erro ao obter características do serviço:', e)
+      }
+    }
+    
+    return null
+  }
+
+  /**
    * Conectar a uma impressora
    */
   const connectPrinter = useCallback(async (printer: PrinterDevice): Promise<boolean> => {
@@ -179,27 +256,40 @@ export function usePrinter() {
           '000018f0-0000-1000-8000-00805f9b34fb',
           '49535343-fe7d-4ae5-8fa9-9fafd205e455',
           '00001101-0000-1000-8000-00805f9b34fb',
+          'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
         ]
       })
 
       if (device && device.gatt) {
-        await device.gatt.connect()
+        const server = await device.gatt.connect()
         
-        const updatedPrinter = { ...printer, connected: true }
-        setSelectedPrinter(updatedPrinter)
-        setConnectionStatus('connected')
+        // Encontrar característica de escrita
+        const characteristic = await findWriteCharacteristic(server)
         
-        // Atualizar lista
-        setPrinters(prev => {
-          const updated = prev.map(p => p.id === printer.id ? updatedPrinter : p)
-          savePairedPrinters(updated)
-          return updated
-        })
-        
-        // Salvar preferência
-        localStorage.setItem(PRINTER_STORAGE_KEY, JSON.stringify(updatedPrinter))
-        
-        return true
+        if (characteristic) {
+          deviceRef.current = device
+          characteristicRef.current = characteristic
+          
+          const updatedPrinter = { ...printer, connected: true }
+          setSelectedPrinter(updatedPrinter)
+          setConnectionStatus('connected')
+          
+          // Atualizar lista
+          setPrinters(prev => {
+            const updated = prev.map(p => p.id === printer.id ? updatedPrinter : p)
+            savePairedPrinters(updated)
+            return updated
+          })
+          
+          // Salvar preferência
+          localStorage.setItem(PRINTER_STORAGE_KEY, JSON.stringify(updatedPrinter))
+          
+          return true
+        } else {
+          setError('Não foi possível encontrar característica de escrita')
+          setConnectionStatus('error')
+          return false
+        }
       }
       
       setConnectionStatus('disconnected')
@@ -231,21 +321,27 @@ export function usePrinter() {
         const device = devices.find((d: any) => d.id === selectedPrinter.id)
         
         if (device && device.gatt) {
-          await device.gatt.connect()
+          const server = await device.gatt.connect()
+          const characteristic = await findWriteCharacteristic(server)
           
-          const updatedPrinter = { ...selectedPrinter, connected: true }
-          setSelectedPrinter(updatedPrinter)
-          setConnectionStatus('connected')
-          
-          setPrinters(prev => {
-            const updated = prev.map(p => p.id === selectedPrinter.id ? updatedPrinter : p)
-            savePairedPrinters(updated)
-            return updated
-          })
-          
-          localStorage.setItem(PRINTER_STORAGE_KEY, JSON.stringify(updatedPrinter))
-          
-          return true
+          if (characteristic) {
+            deviceRef.current = device
+            characteristicRef.current = characteristic
+            
+            const updatedPrinter = { ...selectedPrinter, connected: true }
+            setSelectedPrinter(updatedPrinter)
+            setConnectionStatus('connected')
+            
+            setPrinters(prev => {
+              const updated = prev.map(p => p.id === selectedPrinter.id ? updatedPrinter : p)
+              savePairedPrinters(updated)
+              return updated
+            })
+            
+            localStorage.setItem(PRINTER_STORAGE_KEY, JSON.stringify(updatedPrinter))
+            
+            return true
+          }
         }
       }
       
@@ -259,9 +355,163 @@ export function usePrinter() {
   }, [selectedPrinter, isBluetoothSupported, savePairedPrinters])
 
   /**
+   * Enviar dados para a impressora
+   */
+  const sendData = useCallback(async (data: number[]): Promise<boolean> => {
+    if (!characteristicRef.current) {
+      setError('Impressora não conectada')
+      return false
+    }
+
+    try {
+      const dataArray = new Uint8Array(data)
+      
+      // Verificar se suporta writeWithoutResponse (mais rápido)
+      if (characteristicRef.current.properties.writeWithoutResponse) {
+        await characteristicRef.current.writeValueWithoutResponse(dataArray)
+      } else {
+        await characteristicRef.current.writeValue(dataArray)
+      }
+      
+      return true
+    } catch (err: any) {
+      console.error('Erro ao enviar dados:', err)
+      setError('Erro ao imprimir: ' + (err.message || 'Erro desconhecido'))
+      return false
+    }
+  }, [])
+
+  /**
+   * Imprimir texto
+   */
+  const printText = useCallback(async (text: string): Promise<boolean> => {
+    const data = stringToBytes(text)
+    return sendData([...CMD.INIT, ...data])
+  }, [sendData])
+
+  /**
+   * Imprimir linha
+   */
+  const printLine = useCallback(async (text: string = ''): Promise<boolean> => {
+    const data = [...stringToBytes(text), ...CMD.LINE_FEED]
+    return sendData(data)
+  }, [sendData])
+
+  /**
+   * Imprimir comprovante de estacionamento
+   */
+  const printReceipt = useCallback(async (receipt: {
+    empresa: { nome: string; cnpj: string }
+    vaga: string
+    placa: string
+    cliente: string
+    entrada: string
+    saida?: string
+    valor?: number
+    qrcodeImage?: string
+  }): Promise<boolean> => {
+    if (!characteristicRef.current) {
+      // Tentar reconectar primeiro
+      const reconnected = await reconnectPrinter()
+      if (!reconnected) {
+        setError('Impressora não conectada. Selecione e conecte uma impressora.')
+        return false
+      }
+    }
+
+    try {
+      // Construir dados do comprovante
+      const data: number[] = [
+        ...CMD.INIT,
+        ...CMD.ALIGN_CENTER,
+        ...CMD.BOLD_ON,
+        ...CMD.DOUBLE_HEIGHT_ON,
+        ...stringToBytes(receipt.empresa.nome),
+        ...CMD.LINE_FEED,
+        ...CMD.DOUBLE_HEIGHT_OFF,
+        ...CMD.BOLD_OFF,
+        ...stringToBytes('CNPJ: ' + receipt.cnpj),
+        ...CMD.LINE_FEED,
+        ...CMD.LINE_FEED,
+        ...CMD.ALIGN_LEFT,
+        ...CMD.BOLD_ON,
+        ...stringToBytes('COMPROVANTE DE ESTACIONAMENTO'),
+        ...CMD.BOLD_OFF,
+        ...CMD.LINE_FEED,
+        ...CMD.LINE_FEED,
+        ...stringToBytes('================================'),
+        ...CMD.LINE_FEED,
+        ...stringToBytes('Vaga: '),
+        ...CMD.BOLD_ON,
+        ...stringToBytes(receipt.vaga),
+        ...CMD.BOLD_OFF,
+        ...CMD.LINE_FEED,
+        ...stringToBytes('Placa: '),
+        ...CMD.BOLD_ON,
+        ...stringToBytes(receipt.placa),
+        ...CMD.BOLD_OFF,
+        ...CMD.LINE_FEED,
+        ...stringToBytes('Cliente: ' + receipt.cliente),
+        ...CMD.LINE_FEED,
+        ...stringToBytes('Entrada: ' + receipt.entrada),
+        ...CMD.LINE_FEED,
+      ]
+
+      if (receipt.saida) {
+        data.push(...stringToBytes('Saida: ' + receipt.saida), ...CMD.LINE_FEED)
+      }
+
+      data.push(...stringToBytes('================================'), ...CMD.LINE_FEED)
+
+      if (receipt.valor !== undefined) {
+        data.push(
+          ...CMD.ALIGN_RIGHT,
+          ...CMD.BOLD_ON,
+          ...CMD.DOUBLE_HEIGHT_ON,
+          ...stringToBytes('TOTAL: R$ ' + receipt.valor.toFixed(2)),
+          ...CMD.DOUBLE_HEIGHT_OFF,
+          ...CMD.BOLD_OFF,
+          ...CMD.LINE_FEED,
+          ...CMD.LINE_FEED,
+          ...CMD.ALIGN_LEFT,
+        )
+      }
+
+      // Finalizar
+      data.push(
+        ...CMD.LINE_FEED,
+        ...CMD.LINE_FEED,
+        ...CMD.ALIGN_CENTER,
+        ...stringToBytes('Obrigado pela preferencia!'),
+        ...CMD.LINE_FEED,
+        ...CMD.LINE_FEED,
+        ...CMD.LINE_FEED,
+      )
+
+      // Enviar dados em chunks de 100 bytes (limite de algumas impressoras)
+      const chunkSize = 100
+      for (let i = 0; i < data.length; i += chunkSize) {
+        const chunk = data.slice(i, i + chunkSize)
+        await sendData(chunk)
+      }
+
+      return true
+    } catch (err: any) {
+      console.error('Erro ao imprimir comprovante:', err)
+      setError('Erro ao imprimir: ' + (err.message || 'Erro desconhecido'))
+      return false
+    }
+  }, [sendData, reconnectPrinter])
+
+  /**
    * Desconectar impressora
    */
   const disconnectPrinter = useCallback(() => {
+    if (deviceRef.current && deviceRef.current.gatt?.connected) {
+      deviceRef.current.gatt.disconnect()
+    }
+    deviceRef.current = null
+    characteristicRef.current = null
     setSelectedPrinter(prev => prev ? { ...prev, connected: false } : null)
     setConnectionStatus('disconnected')
   }, [])
@@ -307,6 +557,9 @@ export function usePrinter() {
     disconnectPrinter,
     savePrinter,
     forgetPrinter,
+    printText,
+    printLine,
+    printReceipt,
   }
 }
 

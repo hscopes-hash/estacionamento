@@ -569,6 +569,10 @@ function ExitForm({ movimentacao, token, onSuccess, onCancel }: {
   const [formaPagamento, setFormaPagamento] = useState('')
   const [loading, setLoading] = useState(false)
   const [comprovante, setComprovante] = useState<any>(null)
+  const [printing, setPrinting] = useState(false)
+  const [printError, setPrintError] = useState<string | null>(null)
+
+  const { selectedPrinter, connectionStatus, reconnectPrinter, printReceipt } = usePrinter()
 
   const handleExit = async () => {
     setLoading(true)
@@ -591,6 +595,33 @@ function ExitForm({ movimentacao, token, onSuccess, onCancel }: {
     }
   }
 
+  const handlePrint = async () => {
+    if (!comprovante) return
+    
+    setPrinting(true)
+    setPrintError(null)
+
+    try {
+      const success = await printReceipt({
+        empresa: comprovante.empresa,
+        vaga: comprovante.vaga,
+        placa: comprovante.placa,
+        cliente: comprovante.cliente || 'Avulso',
+        entrada: comprovante.entrada,
+        saida: comprovante.saida,
+        valor: comprovante.valor,
+      })
+
+      if (!success) {
+        setPrintError('Nao foi possivel imprimir. Verifique a conexao com a impressora.')
+      }
+    } catch (err) {
+      setPrintError('Erro ao imprimir: ' + (err instanceof Error ? err.message : 'Erro'))
+    } finally {
+      setPrinting(false)
+    }
+  }
+
   if (comprovante) {
     return (
       <div style={{ textAlign: 'center' }}>
@@ -605,12 +636,44 @@ function ExitForm({ movimentacao, token, onSuccess, onCancel }: {
           <p style={{ fontSize: '13px', margin: '0 0 4px' }}><strong>Vaga:</strong> {comprovante.vaga}</p>
           <p style={{ fontSize: '13px', margin: '0 0 4px' }}><strong>Placa:</strong> {comprovante.placa}</p>
           <p style={{ fontSize: '13px', margin: '0 0 4px' }}><strong>Cliente:</strong> {comprovante.cliente}</p>
-          <p style={{ fontSize: '13px', margin: '0' }}><strong>Entrada:</strong> {comprovante.entrada}</p>
+          <p style={{ fontSize: '13px', margin: '0 0 4px' }}><strong>Entrada:</strong> {comprovante.entrada}</p>
+          {comprovante.saida && <p style={{ fontSize: '13px', margin: '0 0 4px' }}><strong>Saida:</strong> {comprovante.saida}</p>}
+          {comprovante.valor !== undefined && (
+            <p style={{ fontSize: '16px', fontWeight: 'bold', color: '#059669', margin: '8px 0 0' }}>Total: R$ {comprovante.valor.toFixed(2)}</p>
+          )}
         </div>
         {comprovante.qrcodeImage && (
           <img src={comprovante.qrcodeImage} alt="QR Code" style={{ width: '120px', height: '120px', margin: '0 auto 12px', display: 'block' }} />
         )}
-        <button onClick={onSuccess} style={styles.button.primary}>Fechar</button>
+        
+        {/* Botao Imprimir */}
+        {selectedPrinter && (
+          <button 
+            onClick={handlePrint} 
+            disabled={printing}
+            style={{ 
+              ...styles.button.primary, 
+              marginBottom: '8px',
+              backgroundColor: printing ? '#9ca3af' : '#059669',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+            }}
+          >
+            {printing ? 'Imprimindo...' : 'Imprimir Comprovante'}
+          </button>
+        )}
+        
+        {printError && (
+          <p style={{ color: '#dc2626', fontSize: '11px', margin: '4px 0 8px' }}>{printError}</p>
+        )}
+        
+        {!selectedPrinter && (
+          <p style={{ color: '#6b7280', fontSize: '11px', margin: '0 0 8px' }}>Selecione uma impressora para imprimir</p>
+        )}
+        
+        <button onClick={onSuccess} style={styles.button.secondary}>Fechar</button>
       </div>
     )
   }
