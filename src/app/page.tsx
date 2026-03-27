@@ -39,6 +39,9 @@ interface Vaga {
     placa: string
     clienteNome: string | null
     dataEntrada: string
+    status: string
+    formaPagamento?: string | null
+    valorPago?: number | null
   } | null
 }
 
@@ -686,24 +689,46 @@ function ExitForm({ movimentacao, token, onSuccess, onCancel }: {
         <p style={{ margin: '0' }}><strong>Entrada:</strong> {new Date(movimentacao.dataEntrada).toLocaleString('pt-BR')}</p>
       </div>
 
-      <div style={{ marginBottom: '12px' }}>
-        <label style={styles.label}>Forma de Pagamento</label>
-        <select value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)} style={styles.select}>
-          <option value="">Selecionar...</option>
-          <option value="DINHEIRO">Dinheiro</option>
-          <option value="CARTAO_CREDITO">Cartao Credito</option>
-          <option value="CARTAO_DEBITO">Cartao Debito</option>
-          <option value="PIX">PIX</option>
-          <option value="CONVENIO">Convenio</option>
-        </select>
-      </div>
+      {/* Verificar se ja foi pago na entrada */}
+      {movimentacao.status === 'PAGO' ? (
+        <div>
+          <div style={{ backgroundColor: '#d1fae5', border: '1px solid #6ee7b7', borderRadius: '6px', padding: '12px', marginBottom: '12px', textAlign: 'center' }}>
+            <Check style={{ width: '24px', height: '24px', color: '#059669', marginBottom: '4px' }} />
+            <p style={{ fontWeight: 'bold', color: '#059669', margin: '0 0 4px' }}>PAGO NA ENTRADA</p>
+            <p style={{ fontSize: '12px', color: '#065f46', margin: '0' }}>
+              Forma: {movimentacao.formaPagamento} - Valor: R$ {(movimentacao.valorPago || 0).toFixed(2)}
+            </p>
+          </div>
+          
+          <div style={styles.row}>
+            <button onClick={onCancel} style={{ ...styles.button.secondary, flex: 1 }}>Cancelar</button>
+            <button onClick={handleExit} disabled={loading} style={{ ...styles.button.primary, flex: 1 }}>
+              {loading ? 'Processando...' : 'Liberar Saida'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <div style={{ marginBottom: '12px' }}>
+            <label style={styles.label}>Forma de Pagamento</label>
+            <select value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)} style={styles.select}>
+              <option value="">Selecionar...</option>
+              <option value="DINHEIRO">Dinheiro</option>
+              <option value="CARTAO_CREDITO">Cartao Credito</option>
+              <option value="CARTAO_DEBITO">Cartao Debito</option>
+              <option value="PIX">PIX</option>
+              <option value="CONVENIO">Convenio</option>
+            </select>
+          </div>
 
-      <div style={styles.row}>
-        <button onClick={onCancel} style={{ ...styles.button.secondary, flex: 1 }}>Cancelar</button>
-        <button onClick={handleExit} disabled={loading} style={{ ...styles.button.danger, flex: 1 }}>
-          {loading ? 'Processando...' : 'Registrar Saida'}
-        </button>
-      </div>
+          <div style={styles.row}>
+            <button onClick={onCancel} style={{ ...styles.button.secondary, flex: 1 }}>Cancelar</button>
+            <button onClick={handleExit} disabled={loading} style={{ ...styles.button.danger, flex: 1 }}>
+              {loading ? 'Processando...' : 'Registrar Saida'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -736,6 +761,17 @@ function EntryModal({ isOpen, onClose, vaga, estacionamentoId, clientes, onSucce
   const [buscandoPlaca, setBuscandoPlaca] = useState(false)
   const [showProcessing, setShowProcessing] = useState(false)
   const [processingSteps, setProcessingSteps] = useState<ProcessingStep[]>([])
+  
+  // Pagamento antecipado
+  const [formaPagamento, setFormaPagamento] = useState('')
+  const [valorPago, setValorPago] = useState('')
+  
+  // Comprovante
+  const [comprovante, setComprovante] = useState<any>(null)
+  const [printing, setPrinting] = useState(false)
+  const [printError, setPrintError] = useState<string | null>(null)
+
+  const { selectedPrinter, printReceipt } = usePrinter()
 
   useEffect(() => {
     if (isOpen) {
@@ -747,6 +783,10 @@ function EntryModal({ isOpen, onClose, vaga, estacionamentoId, clientes, onSucce
       setNovoClienteNome('')
       setNovoClienteTelefone('')
       setDadosEncontrados(null)
+      setFormaPagamento('')
+      setValorPago('')
+      setComprovante(null)
+      setPrintError(null)
     }
     return () => {
       if (streamRef.current) {
@@ -872,17 +912,29 @@ function EntryModal({ isOpen, onClose, vaga, estacionamentoId, clientes, onSucce
         clienteNomeFinal = novoClienteNome
       }
 
-      await apiCall('/movimentacoes', {
+      const result = await apiCall('/movimentacoes', {
         method: 'POST',
         body: JSON.stringify({
-          acao: 'entrada', estacionamentoId, vagaId: vaga.id,
-          placa: placa.toUpperCase(), clienteId: clienteIdFinal || undefined,
-          clienteNome: clienteNomeFinal || undefined, tipoCliente
+          acao: 'entrada', 
+          estacionamentoId, 
+          vagaId: vaga.id,
+          placa: placa.toUpperCase(), 
+          clienteId: clienteIdFinal || undefined,
+          clienteNome: clienteNomeFinal || undefined, 
+          tipoCliente,
+          // Pagamento antecipado
+          formaPagamento: formaPagamento || undefined,
+          valorPago: valorPago ? parseFloat(valorPago) : undefined,
         }),
       }, token)
 
-      onSuccess()
-      onClose()
+      // Se retornou comprovante, mostrar tela de comprovante
+      if (result.comprovante) {
+        setComprovante(result.comprovante)
+      } else {
+        onSuccess()
+        onClose()
+      }
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Erro')
     } finally {
@@ -890,8 +942,101 @@ function EntryModal({ isOpen, onClose, vaga, estacionamentoId, clientes, onSucce
     }
   }
 
+  const handlePrint = async () => {
+    if (!comprovante) return
+    
+    setPrinting(true)
+    setPrintError(null)
+
+    try {
+      const success = await printReceipt({
+        empresa: comprovante.empresa,
+        vaga: comprovante.vaga?.numero || vaga?.numero || '-',
+        placa: comprovante.placa,
+        cliente: comprovante.clienteNome || 'Avulso',
+        entrada: comprovante.entradaFormatada,
+        valor: comprovante.valorPago,
+      })
+
+      if (!success) {
+        setPrintError('Nao foi possivel imprimir. Verifique a conexao com a impressora.')
+      }
+    } catch (err) {
+      setPrintError('Erro ao imprimir: ' + (err instanceof Error ? err.message : 'Erro'))
+    } finally {
+      setPrinting(false)
+    }
+  }
+
+  const handleCloseComprovante = () => {
+    onSuccess()
+    onClose()
+  }
+
   if (!vaga) return null
   const isOcupada = vaga.status === 'OCUPADA'
+
+  // Tela de comprovante de entrada
+  if (comprovante) {
+    return (
+      <SimpleModal isOpen={isOpen} onClose={handleCloseComprovante} title="Entrada Registrada!">
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ backgroundColor: '#d1fae5', padding: '12px', borderRadius: '6px', marginBottom: '12px' }}>
+            <Check style={{ width: '32px', height: '32px', color: '#059669' }} />
+            <p style={{ fontWeight: 'bold', color: '#059669', margin: '8px 0 0' }}>Entrada Registrada!</p>
+          </div>
+          
+          <div style={{ border: '1px solid #e5e7eb', borderRadius: '6px', padding: '12px', marginBottom: '12px', textAlign: 'left' }}>
+            <p style={{ fontWeight: 'bold', margin: '0 0 8px' }}>{comprovante.empresa?.nome || 'Estacionamento'}</p>
+            {comprovante.empresa?.cnpj && <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>CNPJ: {comprovante.empresa.cnpj}</p>}
+            <hr style={{ border: 'none', borderTop: '1px solid #e5e7eb', margin: '8px 0' }} />
+            <p style={{ fontSize: '13px', margin: '0 0 4px' }}><strong>Vaga:</strong> {comprovante.vaga?.numero || vaga?.numero}</p>
+            <p style={{ fontSize: '13px', margin: '0 0 4px' }}><strong>Placa:</strong> {comprovante.placa}</p>
+            <p style={{ fontSize: '13px', margin: '0 0 4px' }}><strong>Cliente:</strong> {comprovante.clienteNome || 'Avulso'}</p>
+            <p style={{ fontSize: '13px', margin: '0' }}><strong>Entrada:</strong> {comprovante.entradaFormatada}</p>
+            
+            {comprovante.pago && (
+              <>
+                <hr style={{ border: 'none', borderTop: '1px solid #e5e7eb', margin: '8px 0' }} />
+                <p style={{ fontSize: '13px', margin: '0 0 4px' }}><strong>Pago na Entrada:</strong> Sim</p>
+                <p style={{ fontSize: '13px', margin: '0 0 4px' }}><strong>Forma:</strong> {comprovante.formaPagamento}</p>
+                <p style={{ fontSize: '16px', fontWeight: 'bold', color: '#059669', margin: '4px 0 0' }}>Valor: R$ {(comprovante.valorPago || 0).toFixed(2)}</p>
+              </>
+            )}
+          </div>
+          
+          {comprovante.qrcodeImage && (
+            <img src={comprovante.qrcodeImage} alt="QR Code" style={{ width: '120px', height: '120px', margin: '0 auto 12px', display: 'block' }} />
+          )}
+          
+          {/* Botao Imprimir */}
+          {selectedPrinter && (
+            <button 
+              onClick={handlePrint} 
+              disabled={printing}
+              style={{ 
+                ...styles.button.primary, 
+                marginBottom: '8px',
+                backgroundColor: printing ? '#9ca3af' : '#059669',
+              }}
+            >
+              {printing ? 'Imprimindo...' : 'Imprimir Comprovante'}
+            </button>
+          )}
+          
+          {printError && (
+            <p style={{ color: '#dc2626', fontSize: '11px', margin: '4px 0 8px' }}>{printError}</p>
+          )}
+          
+          {!selectedPrinter && (
+            <p style={{ color: '#6b7280', fontSize: '11px', margin: '0 0 8px' }}>Selecione uma impressora para imprimir</p>
+          )}
+          
+          <button onClick={handleCloseComprovante} style={styles.button.secondary}>Fechar</button>
+        </div>
+      </SimpleModal>
+    )
+  }
 
   return (
     <SimpleModal isOpen={isOpen} onClose={onClose} title={`Vaga ${vaga.numero} - ${isOcupada ? 'Saida' : 'Entrada'}`}>
@@ -963,6 +1108,43 @@ function EntryModal({ isOpen, onClose, vaga, estacionamentoId, clientes, onSucce
                 <button type="button" onClick={() => setNovoCliente(true)} style={{ ...styles.button.secondary, fontSize: '12px', padding: '6px 12px' }}>
                   Cadastro Rapido
                 </button>
+              </div>
+            )}
+          </div>
+
+          {/* Pagamento Antecipado */}
+          <div style={{ backgroundColor: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '6px', padding: '8px', marginBottom: '12px' }}>
+            <p style={{ fontSize: '11px', fontWeight: '600', color: '#92400e', margin: '0 0 8px' }}>PAGAMENTO ANTECIPADO (Opcional)</p>
+            
+            <div style={{ marginBottom: '8px' }}>
+              <label style={{ ...styles.label, marginBottom: '2px' }}>Forma de Pagamento</label>
+              <select 
+                value={formaPagamento} 
+                onChange={(e) => { setFormaPagamento(e.target.value); if (!e.target.value) setValorPago(''); }} 
+                style={{ ...styles.select, height: '32px', fontSize: '12px' }}
+              >
+                <option value="">Pagar na saida</option>
+                <option value="DINHEIRO">Dinheiro</option>
+                <option value="CARTAO_CREDITO">Cartao Credito</option>
+                <option value="CARTAO_DEBITO">Cartao Debito</option>
+                <option value="PIX">PIX</option>
+                <option value="CONVENIO">Convenio</option>
+              </select>
+            </div>
+            
+            {formaPagamento && (
+              <div>
+                <label style={{ ...styles.label, marginBottom: '2px' }}>Valor Pago (R$)</label>
+                <input 
+                  type="number" 
+                  step="0.01" 
+                  min="0"
+                  value={valorPago} 
+                  onChange={(e) => setValorPago(e.target.value)} 
+                  placeholder="0.00" 
+                  required
+                  style={{ ...styles.input, height: '32px', fontSize: '12px' }} 
+                />
               </div>
             )}
           </div>

@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
       where: { estacionamentoId },
       include: {
         movimentacoes: {
-          where: { status: 'ABERTO' },
+          where: { status: { in: ['ABERTO', 'PAGO'] } },
           take: 1,
           orderBy: { dataEntrada: 'desc' },
           include: { cliente: true }
@@ -40,7 +40,15 @@ export async function GET(request: NextRequest) {
     const vagasComStatus = vagas.map(vaga => ({
       ...vaga,
       ocupada: vaga.status === 'OCUPADA',
-      movimentacaoAtual: vaga.movimentacoes[0] || null
+      movimentacaoAtual: vaga.movimentacoes[0] ? {
+        id: vaga.movimentacoes[0].id,
+        placa: vaga.movimentacoes[0].placa,
+        clienteNome: vaga.movimentacoes[0].clienteNome,
+        dataEntrada: vaga.movimentacoes[0].dataEntrada,
+        status: vaga.movimentacoes[0].status,
+        formaPagamento: vaga.movimentacoes[0].formaPagamento,
+        valorPago: vaga.movimentacoes[0].valorPago,
+      } : null
     }))
 
     return NextResponse.json({ vagas: vagasComStatus })

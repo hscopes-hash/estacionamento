@@ -119,6 +119,10 @@ export async function POST(request: NextRequest) {
       // Gerar QRCode
       const qrcode = randomBytes(16).toString('hex')
 
+      // Verificar se há pagamento antecipado
+      const pagamentoAntecipado = data.formaPagamento && data.valorPago
+      const status = pagamentoAntecipado ? 'PAGO' : 'ABERTO'
+
       // Criar movimentação
       const movimentacao = await db.movimentacao.create({
         data: {
@@ -130,9 +134,11 @@ export async function POST(request: NextRequest) {
           clienteNome: data.clienteNome || 'Avulso',
           tipoCliente: data.tipoCliente || 'AVULSO',
           dataEntrada: new Date(),
-          status: 'ABERTO',
+          status: status,
           qrcode,
           fotoEntrada: data.fotoEntrada || null,
+          formaPagamento: data.formaPagamento || null,
+          valorPago: data.valorPago || null,
         },
         include: {
           vaga: true,
@@ -187,6 +193,10 @@ export async function POST(request: NextRequest) {
           entradaFormatada: formatDateTime(movimentacao.dataEntrada),
           qrcode: movimentacao.qrcode,
           qrcodeImage: qrCodeDataUrl,
+          // Dados de pagamento se houver
+          pago: status === 'PAGO',
+          formaPagamento: movimentacao.formaPagamento,
+          valorPago: movimentacao.valorPago,
         },
         movimentacao
       })
@@ -203,7 +213,7 @@ export async function POST(request: NextRequest) {
         }
       })
 
-      if (!movimentacao || movimentacao.status !== 'ABERTO') {
+      if (!movimentacao || (movimentacao.status !== 'ABERTO' && movimentacao.status !== 'PAGO')) {
         return NextResponse.json({ error: 'Movimentação não encontrada ou já finalizada' }, { status: 400 })
       }
 
@@ -216,14 +226,17 @@ export async function POST(request: NextRequest) {
         movimentacao.estacionamento.toleranciaMinutos
       )
 
+      // Verificar se já foi pago na entrada
+      const jaPago = movimentacao.status === 'PAGO'
+      
       const updated = await db.movimentacao.update({
         where: { id: data.movimentacaoId },
         data: {
           dataSaida: now,
           usuarioSaidaId: payload.id,
           tempoPermanencia: tempoMinutos,
-          valorTotal: valor,
-          formaPagamento: data.formaPagamento,
+          valorTotal: jaPago ? movimentacao.valorPago : valor,
+          formaPagamento: jaPago ? movimentacao.formaPagamento : data.formaPagamento,
           status: 'FECHADO',
         }
       })
@@ -273,9 +286,12 @@ export async function POST(request: NextRequest) {
           dataSaida: now,
           saidaFormatada: formatDateTime(now),
           tempoPermanencia: formatarTempo(tempoMinutos),
-          valorTotal: valor,
-          formaPagamento: data.formaPagamento,
+          valorTotal: jaPago ? movimentacao.valorPago : valor,
+          formaPagamento: jaPago ? movimentacao.formaPagamento : data.formaPagamento,
           qrcode: movimentacao.qrcode,
+          // Informação de pagamento antecipado
+          jaPago: jaPago,
+          valorPagoEntrada: jaPago ? movimentacao.valorPago : null,
         },
         movimentacao: updated
       })
