@@ -2,7 +2,7 @@
  * Versão do projeto - Parking Control
  * Formato: MAJOR.MINOR.PATCH.BUILD
  */
-export const VERSION = 'v1.4.0.6'
+export const VERSION = 'v1.4.0.7'
 
 /**
  * Data de lançamento da versão atual

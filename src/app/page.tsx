@@ -295,8 +295,13 @@ function LoginScreen({ onLogin }: { onLogin: (user: User, token: string, empresa
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [showDemo, setShowDemo] = useState(true)
-  
-  const { printers, selectedPrinter, setSelectedPrinter, isScanning, connectionStatus, error: printerError, scanPrinters } = usePrinter()
+  const [connectingPrinter, setConnectingPrinter] = useState<string | null>(null)
+
+  const { 
+    printers, selectedPrinter, setSelectedPrinter, isScanning, 
+    connectionStatus, error: printerError, scanPrinters, 
+    connectPrinter, reconnectPrinter, forgetPrinter 
+  } = usePrinter()
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -333,11 +338,30 @@ function LoginScreen({ onLogin }: { onLogin: (user: User, token: string, empresa
     }
   }
 
+  const handleConnectPrinter = async (printer: typeof printers[0]) => {
+    setConnectingPrinter(printer.id)
+    try {
+      await connectPrinter(printer)
+    } finally {
+      setConnectingPrinter(null)
+    }
+  }
+
+  const handleReconnect = async () => {
+    if (!selectedPrinter) return
+    setConnectingPrinter(selectedPrinter.id)
+    try {
+      await reconnectPrinter()
+    } finally {
+      setConnectingPrinter(null)
+    }
+  }
+
   return (
     <div style={{ ...styles.container, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ ...styles.card, width: '100%', maxWidth: '320px' }}>
         <div style={{ textAlign: 'center', padding: '16px 12px 8px' }}>
-          <div style={{ 
+          <div style={{
             width: '48px', height: '48px', backgroundColor: '#10b981', borderRadius: '12px',
             display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px'
           }}>
@@ -348,29 +372,118 @@ function LoginScreen({ onLogin }: { onLogin: (user: User, token: string, empresa
         </div>
 
         <div style={{ padding: '0 12px 16px' }}>
-          {/* Impressora */}
+          {/* Impressoras Pareadas */}
           <div style={{ backgroundColor: '#f3f4f6', borderRadius: '6px', padding: '8px', marginBottom: '12px' }}>
-            <div style={{ fontSize: '11px', fontWeight: '500', marginBottom: '4px' }}>
-              Impressora
-              {connectionStatus === 'connected' && <span style={{ color: '#16a34a', marginLeft: '8px' }}>OK</span>}
+            <div style={{ fontSize: '11px', fontWeight: '500', marginBottom: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>Impressoras Pareadas</span>
+              {connectionStatus === 'connected' && <span style={{ color: '#16a34a' }}>Conectado</span>}
+              {connectionStatus === 'connecting' && <span style={{ color: '#d97706' }}>Conectando...</span>}
             </div>
-            <div style={{ display: 'flex', gap: '4px' }}>
-              <select 
-                style={{ flex: 1, height: '32px', fontSize: '12px', padding: '0 8px', borderRadius: '4px', border: '1px solid #d1d5db' }}
-                value={selectedPrinter?.id || ''}
-                onChange={(e) => {
-                  const printer = printers.find(p => p.id === e.target.value)
-                  if (printer) setSelectedPrinter(printer)
-                }}
-              >
-                <option value="">Selecionar...</option>
-                {printers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-              <button onClick={scanPrinters} disabled={isScanning} style={{ width: '32px', height: '32px', border: '1px solid #d1d5db', borderRadius: '4px', backgroundColor: 'white', cursor: 'pointer' }}>
-                {isScanning ? '...' : 'BT'}
-              </button>
-            </div>
-            {printerError && <p style={{ fontSize: '10px', color: '#dc2626', marginTop: '4px' }}>{printerError}</p>}
+
+            {/* Lista de impressoras pareadas */}
+            {printers.length > 0 ? (
+              <div style={{ marginBottom: '8px' }}>
+                {printers.map(printer => (
+                  <div 
+                    key={printer.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '6px 8px',
+                      backgroundColor: selectedPrinter?.id === printer.id ? '#e0f2fe' : 'white',
+                      borderRadius: '4px',
+                      marginBottom: '4px',
+                      border: selectedPrinter?.id === printer.id ? '1px solid #0ea5e9' : '1px solid #e5e7eb',
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ fontSize: '12px', fontWeight: '500', margin: 0, truncate: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                        {printer.name}
+                      </p>
+                      <p style={{ fontSize: '10px', color: printer.connected ? '#16a34a' : '#6b7280', margin: 0 }}>
+                        {printer.connected ? 'Conectado' : 'Pareado'}
+                      </p>
+                    </div>
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      {selectedPrinter?.id === printer.id && !printer.connected && (
+                        <button
+                          onClick={handleReconnect}
+                          disabled={connectingPrinter === printer.id}
+                          style={{
+                            padding: '4px 8px',
+                            fontSize: '10px',
+                            backgroundColor: '#0ea5e9',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {connectingPrinter === printer.id ? '...' : 'Conectar'}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setSelectedPrinter(printer)}
+                        style={{
+                          padding: '4px 8px',
+                          fontSize: '10px',
+                          backgroundColor: selectedPrinter?.id === printer.id ? '#0ea5e9' : '#6b7280',
+                          color: 'white',
+                          border: 'none',
+                            borderRadius: '4px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Selecionar
+                      </button>
+                      <button
+                        onClick={() => forgetPrinter(printer.id)}
+                        style={{
+                          padding: '4px 6px',
+                          fontSize: '10px',
+                          backgroundColor: '#ef4444',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        X
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ fontSize: '11px', color: '#6b7280', margin: '0 0 8px', textAlign: 'center' }}>
+                Nenhuma impressora pareada
+              </p>
+            )}
+
+            {/* Botao para buscar nova impressora */}
+            <button
+              onClick={scanPrinters}
+              disabled={isScanning}
+              style={{
+                width: '100%',
+                height: '32px',
+                fontSize: '12px',
+                backgroundColor: '#374151',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: isScanning ? 'wait' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '4px',
+              }}
+            >
+              {isScanning ? 'Buscando...' : '+ Buscar Impressora'}
+            </button>
+
+            {printerError && <p style={{ fontSize: '10px', color: '#dc2626', marginTop: '4px', margin: '4px 0 0' }}>{printerError}</p>}
           </div>
 
           {showDemo ? (
