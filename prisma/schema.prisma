@@ -1,0 +1,291 @@
+// ============================================
+// PARKING CONTROL SYSTEM - MICRO SAAS
+// Version: v1.1.0.1
+// Database: PostgreSQL
+// ============================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// EMPRESA - Multi-tenant
+// ============================================
+model Empresa {
+  id                String   @id @default(cuid())
+  nome              String
+  cnpj              String   @unique
+  email             String
+  telefone          String?
+  endereco          String?
+  cidade            String?
+  estado            String?
+  cep               String?
+  logo              String?
+  ativo             Boolean  @default(true)
+  plano             String   @default("TRIAL") // TRIAL, BASIC, PRO, ENTERPRISE
+  dataInicioTrial   DateTime?
+  dataFimTrial      DateTime?
+  dataExpiracao     DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  usuarios          Usuario[]
+  estacionamentos   Estacionamento[]
+  clientes          Cliente[]
+  configuracoes     Configuracao[]
+
+  @@map("empresas")
+}
+
+// ============================================
+// USUARIO - Com níveis de acesso
+// ============================================
+model Usuario {
+  id                String   @id @default(cuid())
+  empresaId         String
+  nome              String
+  email             String   @unique
+  senha             String
+  telefone          String?
+  nivel             String   @default("OPERADOR") // ADMIN, GERENTE, OPERADOR
+  ativo             Boolean  @default(true)
+  ultimoAcesso      DateTime?
+  foto              String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  empresa           Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  entradas          Movimentacao[] @relation("EntradaUsuario")
+  saidas            Movimentacao[] @relation("SaidaUsuario")
+
+  @@index([empresaId])
+  @@map("usuarios")
+}
+
+// ============================================
+// CLIENTE - Clientes do estacionamento
+// ============================================
+model Cliente {
+  id                String   @id @default(cuid())
+  empresaId         String
+  nome              String
+  cpfCnpj           String?
+  email             String?
+  telefone          String?
+  endereco          String?
+  cidade            String?
+  estado            String?
+  cep               String?
+  tipo              String   @default("AVULSO") // AVULSO, MENSALISTA, CONVENIO
+  observacoes       String?
+  ativo             Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  empresa           Empresa       @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  veiculos          Veiculo[]
+  movimentacoes     Movimentacao[]
+
+  @@index([empresaId])
+  @@index([tipo])
+  @@map("clientes")
+}
+
+// ============================================
+// VEICULO - Veículos dos clientes
+// ============================================
+model Veiculo {
+  id                String   @id @default(cuid())
+  clienteId         String
+  placa             String
+  marca             String?
+  modelo            String?
+  cor               String?
+  ano               String?
+  observacoes       String?
+  ativo             Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  cliente           Cliente       @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  movimentacoes     Movimentacao[]
+
+  @@index([placa])
+  @@index([clienteId])
+  @@map("veiculos")
+}
+
+// ============================================
+// ESTACIONAMENTO - Locais de estacionamento
+// ============================================
+model Estacionamento {
+  id                String   @id @default(cuid())
+  empresaId         String
+  nome              String
+  descricao         String?
+  endereco          String?
+  cidade            String?
+  estado            String?
+  cep               String?
+  totalVagas        Int
+  tipo              String   @default("FIXO") // FIXO, EVENTO
+  valorHora         Float    @default(0)
+  valorFracao       Float    @default(0)
+  valorPernoite     Float    @default(0)
+  toleranciaMinutos Int      @default(15)
+  horaAbertura      String   @default("06:00")
+  horaFechamento    String   @default("22:00")
+  ativo             Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  empresa           Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  vagas             Vaga[]
+  movimentacoes     Movimentacao[]
+
+  @@index([empresaId])
+  @@index([tipo])
+  @@map("estacionamentos")
+}
+
+// ============================================
+// VAGA - Vagas do estacionamento
+// ============================================
+model Vaga {
+  id                String   @id @default(cuid())
+  estacionamentoId  String
+  numero            String
+  andar             String?
+  setor             String?
+  tipo              String   @default("COMUM") // COMUM, DEFICIENTE, IDOSO, VIP
+  status            String   @default("DISPONIVEL") // DISPONIVEL, OCUPADA, MANUTENCAO, RESERVADA
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  estacionamento    Estacionamento    @relation(fields: [estacionamentoId], references: [id], onDelete: Cascade)
+  movimentacoes     Movimentacao[]
+
+  @@unique([estacionamentoId, numero])
+  @@index([estacionamentoId])
+  @@index([status])
+  @@map("vagas")
+}
+
+// ============================================
+// MOVIMENTACAO - Entradas e saídas
+// ============================================
+model Movimentacao {
+  id                String   @id @default(cuid())
+  estacionamentoId  String
+  vagaId            String
+  clienteId         String?
+  usuarioEntradaId  String
+  usuarioSaidaId    String?
+  veiculoId         String?
+  placa             String
+  clienteNome       String?
+  tipoCliente       String  @default("AVULSO") // AVULSO, MENSALISTA, CONVENIO
+  dataEntrada       DateTime @default(now())
+  dataSaida         DateTime?
+  tempoPermanencia  Int? // em minutos
+  valorTotal        Float?
+  valorPago         Float?
+  formaPagamento    String? // DINHEIRO, CARTAO_CREDITO, CARTAO_DEBITO, PIX, CONVENIO
+  status            String  @default("ABERTO") // ABERTO, FECHADO, PAGO, CANCELADO
+  qrcode            String? // Hash para validação
+  qrcodeUsado       Boolean @default(false)
+  fotoEntrada       String? // Base64 da foto da placa
+  fotoSaida         String?
+  observacoes       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  estacionamento    Estacionamento @relation(fields: [estacionamentoId], references: [id])
+  vaga              Vaga           @relation(fields: [vagaId], references: [id])
+  cliente           Cliente?       @relation(fields: [clienteId], references: [id])
+  usuarioEntrada    Usuario        @relation("EntradaUsuario", fields: [usuarioEntradaId], references: [id])
+  usuarioSaida      Usuario?       @relation("SaidaUsuario", fields: [usuarioSaidaId], references: [id])
+  veiculo           Veiculo?       @relation(fields: [veiculoId], references: [id])
+
+  @@index([estacionamentoId])
+  @@index([vagaId])
+  @@index([clienteId])
+  @@index([placa])
+  @@index([status])
+  @@index([dataEntrada])
+  @@map("movimentacoes")
+}
+
+// ============================================
+// CONFIGURACAO - Configurações do sistema
+// ============================================
+model Configuracao {
+  id                String   @id @default(cuid())
+  empresaId         String
+  chave             String
+  valor             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  empresa           Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@unique([empresaId, chave])
+  @@index([empresaId])
+  @@map("configuracoes")
+}
+
+// ============================================
+// SESSAO - Sessões de usuário
+// ============================================
+model Sessao {
+  id                String   @id @default(cuid())
+  usuarioId         String
+  token             String   @unique
+  dispositivo       String?
+  ip                String?
+  userAgent         String?
+  dataExpiracao     DateTime
+  ativo             Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([usuarioId])
+  @@index([token])
+  @@map("sessoes")
+}
+
+// ============================================
+// LOG - Log de ações do sistema
+// ============================================
+model Log {
+  id                String   @id @default(cuid())
+  empresaId         String?
+  usuarioId         String?
+  acao              String
+  entidade          String?
+  entidadeId        String?
+  dadosAntigos      String? // JSON
+  dadosNovos        String? // JSON
+  ip                String?
+  createdAt         DateTime @default(now())
+
+  @@index([empresaId])
+  @@index([usuarioId])
+  @@index([acao])
+  @@index([createdAt])
+  @@map("logs")
+}
