@@ -11,6 +11,7 @@ type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 
 const PRINTER_STORAGE_KEY = 'parking_control_printer'
 const CREDENTIALS_STORAGE_KEY = 'parking_control_credentials'
+const PAIRED_PRINTERS_KEY = 'parking_control_paired_printers'
 
 /**
  * Hook para gerenciar impressoras Bluetooth
@@ -25,18 +26,69 @@ export function usePrinter() {
   // Verificar suporte ao Bluetooth
   const isBluetoothSupported = typeof navigator !== 'undefined' && 'bluetooth' in navigator
 
-  // Carregar impressora salva
+  // Carregar impressoras pareadas salvas e tentar obter dispositivos do sistema
   useEffect(() => {
-    const saved = localStorage.getItem(PRINTER_STORAGE_KEY)
-    if (saved) {
-      try {
-        const printer = JSON.parse(saved) as PrinterDevice
-        setSelectedPrinter(printer)
-        setPrinters([printer])
-      } catch (e) {
-        console.error('Erro ao carregar impressora salva:', e)
+    const loadPrinters = async () => {
+      const loadedPrinters: PrinterDevice[] = []
+      
+      // 1. Carregar impressoras pareadas salvas no localStorage
+      const pairedSaved = localStorage.getItem(PAIRED_PRINTERS_KEY)
+      if (pairedSaved) {
+        try {
+          const paired = JSON.parse(pairedSaved) as PrinterDevice[]
+          loadedPrinters.push(...paired)
+        } catch (e) {
+          console.error('Erro ao carregar impressoras pareadas:', e)
+        }
       }
+      
+      // 2. Carregar impressora selecionada anteriormente
+      const saved = localStorage.getItem(PRINTER_STORAGE_KEY)
+      if (saved) {
+        try {
+          const printer = JSON.parse(saved) as PrinterDevice
+          setSelectedPrinter(printer)
+          
+          // Adicionar à lista se não estiver
+          if (!loadedPrinters.find(p => p.id === printer.id)) {
+            loadedPrinters.unshift(printer)
+          }
+        } catch (e) {
+          console.error('Erro ao carregar impressora salva:', e)
+        }
+      }
+      
+      // 3. Tentar obter dispositivos já pareados via API (Chrome Android)
+      if (isBluetoothSupported && (navigator as any).bluetooth?.getDevices) {
+        try {
+          const devices = await (navigator as any).bluetooth.getDevices()
+          for (const device of devices) {
+            const existing = loadedPrinters.find(p => p.id === device.id)
+            if (!existing) {
+              loadedPrinters.push({
+                id: device.id,
+                name: device.name || 'Impressora Pareada',
+                type: 'bluetooth',
+                connected: false
+              })
+            }
+          }
+        } catch (e) {
+          console.log('getDevices() não disponível ou sem permissão:', e)
+        }
+      }
+      
+      setPrinters(loadedPrinters)
     }
+    
+    loadPrinters()
+  }, [isBluetoothSupported])
+
+  /**
+   * Salvar lista de impressoras pareadas
+   */
+  const savePairedPrinters = useCallback((printerList: PrinterDevice[]) => {
+    localStorage.setItem(PAIRED_PRINTERS_KEY, JSON.stringify(printerList))
   }, [])
 
   /**
@@ -74,14 +126,22 @@ export function usePrinter() {
         setPrinters(prev => {
           // Evitar duplicados
           const exists = prev.find(p => p.id === newPrinter.id)
+          let updated: PrinterDevice[]
           if (exists) {
-            return prev.map(p => p.id === newPrinter.id ? { ...p, name: newPrinter.name } : p)
+            updated = prev.map(p => p.id === newPrinter.id ? { ...p, name: newPrinter.name } : p)
+          } else {
+            updated = [...prev, newPrinter]
           }
-          return [...prev, newPrinter]
+          // Salvar lista atualizada
+          savePairedPrinters(updated)
+          return updated
         })
         
         // Selecionar automaticamente a impressora encontrada
         setSelectedPrinter(newPrinter)
+        
+        // Salvar como impressora selecionada
+        localStorage.setItem(PRINTER_STORAGE_KEY, JSON.stringify(newPrinter))
         
         return newPrinter
       }
@@ -98,7 +158,7 @@ export function usePrinter() {
     } finally {
       setIsScanning(false)
     }
-  }, [isBluetoothSupported])
+  }, [isBluetoothSupported, savePairedPrinters])
 
   /**
    * Conectar a uma impressora
@@ -130,9 +190,11 @@ export function usePrinter() {
         setConnectionStatus('connected')
         
         // Atualizar lista
-        setPrinters(prev => 
-          prev.map(p => p.id === printer.id ? updatedPrinter : p)
-        )
+        setPrinters(prev => {
+          const updated = prev.map(p => p.id === printer.id ? updatedPrinter : p)
+          savePairedPrinters(updated)
+          return updated
+        })
         
         // Salvar preferência
         localStorage.setItem(PRINTER_STORAGE_KEY, JSON.stringify(updatedPrinter))
@@ -149,7 +211,52 @@ export function usePrinter() {
       }
       return false
     }
-  }, [isBluetoothSupported])
+  }, [isBluetoothSupported, savePairedPrinters])
+
+  /**
+   * Tentar reconectar à impressora selecionada automaticamente
+   */
+  const reconnectPrinter = useCallback(async (): Promise<boolean> => {
+    if (!selectedPrinter || !isBluetoothSupported) {
+      return false
+    }
+
+    setConnectionStatus('connecting')
+    setError(null)
+
+    try {
+      // Tentar obter o dispositivo pelo ID
+      if ((navigator as any).bluetooth?.getDevices) {
+        const devices = await (navigator as any).bluetooth.getDevices()
+        const device = devices.find((d: any) => d.id === selectedPrinter.id)
+        
+        if (device && device.gatt) {
+          await device.gatt.connect()
+          
+          const updatedPrinter = { ...selectedPrinter, connected: true }
+          setSelectedPrinter(updatedPrinter)
+          setConnectionStatus('connected')
+          
+          setPrinters(prev => {
+            const updated = prev.map(p => p.id === selectedPrinter.id ? updatedPrinter : p)
+            savePairedPrinters(updated)
+            return updated
+          })
+          
+          localStorage.setItem(PRINTER_STORAGE_KEY, JSON.stringify(updatedPrinter))
+          
+          return true
+        }
+      }
+      
+      setConnectionStatus('disconnected')
+      return false
+    } catch (err: any) {
+      setConnectionStatus('error')
+      console.log('Não foi possível reconectar automaticamente:', err)
+      return false
+    }
+  }, [selectedPrinter, isBluetoothSupported, savePairedPrinters])
 
   /**
    * Desconectar impressora
@@ -170,6 +277,22 @@ export function usePrinter() {
     }
   }, [])
 
+  /**
+   * Remover impressora da lista de pareados
+   */
+  const forgetPrinter = useCallback((printerId: string) => {
+    setPrinters(prev => {
+      const updated = prev.filter(p => p.id !== printerId)
+      savePairedPrinters(updated)
+      return updated
+    })
+    
+    if (selectedPrinter?.id === printerId) {
+      setSelectedPrinter(null)
+      localStorage.removeItem(PRINTER_STORAGE_KEY)
+    }
+  }, [selectedPrinter, savePairedPrinters])
+
   return {
     printers,
     selectedPrinter,
@@ -180,8 +303,10 @@ export function usePrinter() {
     isBluetoothSupported,
     scanPrinters,
     connectPrinter,
+    reconnectPrinter,
     disconnectPrinter,
     savePrinter,
+    forgetPrinter,
   }
 }
 
