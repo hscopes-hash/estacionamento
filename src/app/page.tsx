@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { 
   Car, LogOut, Plus, Users, Building2, Settings, QrCode, Camera, 
   Clock, User, CreditCard, Search, ChevronRight, X, Check, AlertCircle,
-  Menu, Home as HomeIcon, FileText, Scanner, Printer, Bluetooth, RefreshCw
+  Menu
 } from 'lucide-react'
 import { useAuthStore } from '@/lib/store'
 import { ProcessingOverlay, ProcessingStep } from '@/components/ProcessingOverlay'
