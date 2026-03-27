@@ -1224,35 +1224,19 @@ export default function Home() {
     const checkFullscreen = () => {
       setFullscreen(isFullscreen())
     }
-    
+
     document.addEventListener('fullscreenchange', checkFullscreen)
     document.addEventListener('webkitfullscreenchange', checkFullscreen)
     document.addEventListener('mozfullscreenchange', checkFullscreen)
     document.addEventListener('MSFullscreenChange', checkFullscreen)
-    
-    // Tentar entrar em tela cheia automaticamente apos interacao do usuario
-    const tryAutoFullscreen = async () => {
-      if (showFullscreenBtn && !isFullscreen()) {
-        const success = await enterFullscreen()
-        if (success) {
-          setFullscreen(true)
-        }
-      }
-    }
-    
-    // Adicionar listener para primeira interacao
-    document.addEventListener('click', tryAutoFullscreen, { once: true })
-    document.addEventListener('touchstart', tryAutoFullscreen, { once: true })
-    
+
     return () => {
       document.removeEventListener('fullscreenchange', checkFullscreen)
       document.removeEventListener('webkitfullscreenchange', checkFullscreen)
       document.removeEventListener('mozfullscreenchange', checkFullscreen)
       document.removeEventListener('MSFullscreenChange', checkFullscreen)
-      document.removeEventListener('click', tryAutoFullscreen)
-      document.removeEventListener('touchstart', tryAutoFullscreen)
     }
-  }, [showFullscreenBtn])
+  }, [])
 
   const toggleFullscreen = async () => {
     if (isFullscreen()) {
