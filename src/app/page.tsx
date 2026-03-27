@@ -1157,96 +1157,10 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
 }
 
 // Main App
-// Entrar em tela cheia
-async function enterFullscreen(): Promise<boolean> {
-  try {
-    const elem = document.documentElement
-    if (elem.requestFullscreen) {
-      await elem.requestFullscreen()
-      return true
-    } else if ((elem as any).webkitRequestFullscreen) {
-      await (elem as any).webkitRequestFullscreen()
-      return true
-    } else if ((elem as any).mozRequestFullScreen) {
-      await (elem as any).mozRequestFullScreen()
-      return true
-    } else if ((elem as any).msRequestFullscreen) {
-      await (elem as any).msRequestFullscreen()
-      return true
-    }
-    return false
-  } catch (err) {
-    console.log('Fullscreen nao suportado:', err)
-    return false
-  }
-}
-
-// Sair da tela cheia
-async function exitFullscreen(): Promise<void> {
-  try {
-    if (document.exitFullscreen) {
-      await document.exitFullscreen()
-    } else if ((document as any).webkitExitFullscreen) {
-      await (document as any).webkitExitFullscreen()
-    } else if ((document as any).mozCancelFullScreen) {
-      await (document as any).mozCancelFullScreen()
-    } else if ((document as any).msExitFullscreen) {
-      await (document as any).msExitFullscreen()
-    }
-  } catch (err) {
-    console.log('Erro ao sair do fullscreen:', err)
-  }
-}
-
-// Verificar se esta em tela cheia
-function isFullscreen(): boolean {
-  return !!(
-    document.fullscreenElement ||
-    (document as any).webkitFullscreenElement ||
-    (document as any).mozFullScreenElement ||
-    (document as any).msFullscreenElement
-  )
-}
-
 export default function Home() {
   const [user, setUser] = useState<User | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [empresa, setEmpresa] = useState<{ id: string; nome: string; plano: string; dataFimTrial: string | null } | undefined>()
-  const [fullscreen, setFullscreen] = useState(false)
-  const [showFullscreenBtn, setShowFullscreenBtn] = useState(() => {
-    if (typeof window === 'undefined') return false
-    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-      (window.innerWidth <= 768 && 'ontouchstart' in window)
-  })
-
-  // Verificar estado do fullscreen
-  useEffect(() => {
-    const checkFullscreen = () => {
-      setFullscreen(isFullscreen())
-    }
-
-    document.addEventListener('fullscreenchange', checkFullscreen)
-    document.addEventListener('webkitfullscreenchange', checkFullscreen)
-    document.addEventListener('mozfullscreenchange', checkFullscreen)
-    document.addEventListener('MSFullscreenChange', checkFullscreen)
-
-    return () => {
-      document.removeEventListener('fullscreenchange', checkFullscreen)
-      document.removeEventListener('webkitfullscreenchange', checkFullscreen)
-      document.removeEventListener('mozfullscreenchange', checkFullscreen)
-      document.removeEventListener('MSFullscreenChange', checkFullscreen)
-    }
-  }, [])
-
-  const toggleFullscreen = async () => {
-    if (isFullscreen()) {
-      await exitFullscreen()
-      setFullscreen(false)
-    } else {
-      const success = await enterFullscreen()
-      setFullscreen(success)
-    }
-  }
 
   const handleLogin = (loggedUser: User, token: string, empresa?: { id: string; nome: string; plano: string; dataFimTrial: string | null }) => {
     setUser(loggedUser)
@@ -1260,41 +1174,11 @@ export default function Home() {
     setEmpresa(undefined)
   }
 
-  // Botao de tela cheia para mobile
-  const fullscreenButton = showFullscreenBtn && (
-    <button
-      onClick={toggleFullscreen}
-      style={{
-        position: 'fixed',
-        top: '8px',
-        right: '8px',
-        zIndex: 9999,
-        backgroundColor: fullscreen ? '#059669' : '#374151',
-        color: 'white',
-        border: 'none',
-        borderRadius: '4px',
-        padding: '8px 12px',
-        fontSize: '12px',
-        cursor: 'pointer',
-      }}
-    >
-      {fullscreen ? 'Sair Tela Cheia' : 'Tela Cheia'}
-    </button>
-  )
-
   if (!user || !token) {
-    return (
-      <>
-        {fullscreenButton}
-        <LoginScreen onLogin={handleLogin} />
-      </>
-    )
+    return <LoginScreen onLogin={handleLogin} />
   }
 
   return (
-    <>
-      {fullscreenButton}
-      <Dashboard user={user} token={token} onLogout={handleLogout} />
-    </>
+    <Dashboard user={user} token={token} onLogout={handleLogout} />
   )
 }
