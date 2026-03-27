@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { 
   Car, LogOut, Plus, Users, Building2, Settings, QrCode, Camera, 
   Clock, User, CreditCard, Search, ChevronRight, X, Check, AlertCircle,
-  Menu
+  Menu, Maximize, Minimize
 } from 'lucide-react'
 import { useAuthStore } from '@/lib/store'
 import { ProcessingOverlay, ProcessingStep } from '@/components/ProcessingOverlay'
@@ -1015,6 +1015,45 @@ function EstacionamentosTab({ token, onSelect }: { token: string; onSelect: (id:
 }
 
 // Dashboard
+// Funcoes de tela cheia
+function isFullscreen(): boolean {
+  return !!(
+    document.fullscreenElement ||
+    (document as any).webkitFullscreenElement ||
+    (document as any).mozFullScreenElement ||
+    (document as any).msFullscreenElement
+  )
+}
+
+async function toggleFullscreen(): Promise<void> {
+  try {
+    if (isFullscreen()) {
+      if (document.exitFullscreen) {
+        await document.exitFullscreen()
+      } else if ((document as any).webkitExitFullscreen) {
+        await (document as any).webkitExitFullscreen()
+      } else if ((document as any).mozCancelFullScreen) {
+        await (document as any).mozCancelFullScreen()
+      } else if ((document as any).msExitFullscreen) {
+        await (document as any).msExitFullscreen()
+      }
+    } else {
+      const elem = document.documentElement
+      if (elem.requestFullscreen) {
+        await elem.requestFullscreen()
+      } else if ((elem as any).webkitRequestFullscreen) {
+        await (elem as any).webkitRequestFullscreen()
+      } else if ((elem as any).mozRequestFullScreen) {
+        await (elem as any).mozRequestFullScreen()
+      } else if ((elem as any).msRequestFullscreen) {
+        await (elem as any).msRequestFullscreen()
+      }
+    }
+  } catch (err) {
+    console.log('Fullscreen nao suportado')
+  }
+}
+
 function Dashboard({ user, token, onLogout }: { user: User; token: string; onLogout: () => void }) {
   const [activeTab, setActiveTab] = useState<'vagas' | 'clientes' | 'estac' | 'menu'>('vagas')
   const [estacionamentoId, setEstacionamentoId] = useState<string>('')
@@ -1023,6 +1062,18 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
   const [selectedVaga, setSelectedVaga] = useState<Vaga | null>(null)
   const [showQRScanner, setShowQRScanner] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [fullscreen, setFullscreen] = useState(false)
+
+  // Monitorar estado do fullscreen
+  useEffect(() => {
+    const checkFullscreen = () => setFullscreen(isFullscreen())
+    document.addEventListener('fullscreenchange', checkFullscreen)
+    document.addEventListener('webkitfullscreenchange', checkFullscreen)
+    return () => {
+      document.removeEventListener('fullscreenchange', checkFullscreen)
+      document.removeEventListener('webkitfullscreenchange', checkFullscreen)
+    }
+  }, [])
 
   useEffect(() => {
     loadInitialData()
@@ -1082,9 +1133,14 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
             <h1 style={styles.title}>Parking Control</h1>
             <p style={styles.subtitle}>{user.nome} - {user.nivel}</p>
           </div>
-          <button onClick={onLogout} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', padding: '8px' }}>
-            <LogOut style={{ width: '20px', height: '20px' }} />
-          </button>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <button onClick={toggleFullscreen} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', padding: '8px' }}>
+              {fullscreen ? <Minimize style={{ width: '20px', height: '20px' }} /> : <Maximize style={{ width: '20px', height: '20px' }} />}
+            </button>
+            <button onClick={onLogout} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', padding: '8px' }}>
+              <LogOut style={{ width: '20px', height: '20px' }} />
+            </button>
+          </div>
         </div>
 
         {/* Stats */}
